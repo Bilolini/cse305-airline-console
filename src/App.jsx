@@ -744,6 +744,7 @@ function RouteResults({
                   arrivalTime: route.last_arrival_time,
                   duration,
                   stops: route.total_stops,
+                  routePrice: basePrice,
                   stopAirports,
                   legs: legDetails,
                   layovers: getLayoverDetails(legDetails)
@@ -1320,6 +1321,18 @@ function buildAircraftSeatLayout(seatList) {
   };
 }
 
+function getSeatGroupBreaks(letterCount, rowCount) {
+  if (rowCount === 1) return new Set([Math.ceil(letterCount / 2)]);
+  if (letterCount >= 7) return new Set([2, 5]);
+  if (letterCount >= 6) return new Set([3]);
+  if (letterCount >= 4) return new Set([2]);
+  return new Set();
+}
+
+function getExitMarkerLabel(rowCount) {
+  return rowCount > 1 ? "EXIT" : "EXIT >>";
+}
+
 function SeatSelectionStep({
   seat,
   selectedLegIndex,
@@ -1489,26 +1502,36 @@ function SeatSelectionStep({
         <div className="aircraftCabin">
           <div className="cabinEmptySpace" />
           <div className="aircraftSeatMap">
-            {aircraftLayout.rows.map((row) => (
-              <div className="aircraftSeatColumn" key={row.rowNumber}>
-                {row.seats.map((seatCell, seatIndex) => (
-                  <React.Fragment key={seatCell.seatNo}>
-                    {seatIndex === Math.ceil(row.seats.length / 2) && <span className="aircraftAisleDot" />}
-                    {seatCell.seatItem ? (
-                      <SeatPickButton
-                        isSelected={selectedSeatIdsForCurrentLeg.has(String(seatCell.seatItem.flightSeatId))}
-                        onPick={() => pickSeat(seatCell.seatItem)}
-                        seatNo={seatCell.seatNo}
-                      />
-                    ) : (
-                      <span className="seatPick occupied" title={`Seat ${seatCell.seatNo} occupied`}>
-                        {seatCell.seatNo}
-                      </span>
-                    )}
-                  </React.Fragment>
-                ))}
-              </div>
-            ))}
+            <div className="aircraftSeatDeck">
+              <span className="exitMark top">{getExitMarkerLabel(aircraftLayout.rows.length)}</span>
+              {aircraftLayout.rows.map((row) => (
+                <div
+                  className="aircraftSeatColumn"
+                  key={row.rowNumber}
+                  style={{ "--seat-count": aircraftLayout.letters.length }}
+                >
+                  {row.seats.map((seatCell, seatIndex) => (
+                    <React.Fragment key={seatCell.seatNo}>
+                      {getSeatGroupBreaks(row.seats.length, aircraftLayout.rows.length).has(seatIndex) && (
+                        <span className="aircraftWalkwayGap" />
+                      )}
+                      {seatCell.seatItem ? (
+                        <SeatPickButton
+                          isSelected={selectedSeatIdsForCurrentLeg.has(String(seatCell.seatItem.flightSeatId))}
+                          onPick={() => pickSeat(seatCell.seatItem)}
+                          seatNo={seatCell.seatNo}
+                        />
+                      ) : (
+                        <span className="seatPick occupied" title={`Seat ${seatCell.seatNo} occupied`}>
+                          {seatCell.seatNo}
+                        </span>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+              ))}
+              <span className="exitMark bottom">{getExitMarkerLabel(aircraftLayout.rows.length)}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -1584,13 +1607,12 @@ function BookingInfoCard({ seat, bookingResult, paymentResult }) {
   const info = seat.routeInfo ?? {};
   const layovers = info.layovers ?? [];
   const itineraryLegs = info.legs ?? [];
-  const total = getSeatTotal(seat);
   return (
     <section className="panel bookingInfoPanel">
       <PanelHeader icon={Plane} title="Booking Info" />
       <BookingRouteMini info={info} />
       {itineraryLegs.length > 0 && (
-        <ItineraryDetails legs={itineraryLegs} layovers={layovers} total={total} />
+        <ItineraryDetails legs={itineraryLegs} layovers={layovers} />
       )}
       <PriceDetails seat={seat} />
       {bookingResult && (
@@ -1654,7 +1676,7 @@ function BookingRouteMini({ info }) {
   );
 }
 
-function ItineraryDetails({ legs, layovers, total }) {
+function ItineraryDetails({ legs, layovers }) {
   return (
     <div className="itineraryDetails">
       {legs.map((leg, index) => (
@@ -1686,12 +1708,6 @@ function ItineraryDetails({ legs, layovers, total }) {
           )}
         </React.Fragment>
       ))}
-      {layovers.length > 0 && (
-        <div className="itineraryTotal">
-          <span>Total cost</span>
-          <strong>{formatMoney(total)}</strong>
-        </div>
-      )}
     </div>
   );
 }
@@ -1715,9 +1731,8 @@ function useCountdown(deadline) {
 
 function PriceDetails({ seat }) {
   const travellers = seat.travellers ?? { adults: 1, children: 0 };
-  const travellerCount = seat.travellerCount ?? travellers.adults + travellers.children;
   const ticketLabel = buildTicketLabel(travellers);
-  const total = Number(seat.price ?? 0) * travellerCount;
+  const total = getSeatTotal(seat);
 
   return (
     <div className="priceDetails">
@@ -1737,7 +1752,15 @@ function PriceDetails({ seat }) {
 function getSeatTotal(seat) {
   const travellers = seat.travellers ?? { adults: 1, children: 0 };
   const travellerCount = seat.travellerCount ?? travellers.adults + travellers.children;
-  return Number(seat.price ?? 0) * travellerCount;
+  const routePrice = seat.routeInfo?.routePrice;
+  if (routePrice !== null && routePrice !== undefined) {
+    return Number(routePrice ?? 0) * travellerCount;
+  }
+  const legTotal = (seat.routeInfo?.legs ?? []).reduce(
+    (total, leg) => total + Number(leg.price ?? 0),
+    0
+  );
+  return Number(legTotal || seat.price || 0) * travellerCount;
 }
 
 function buildTicketLabel(travellers) {

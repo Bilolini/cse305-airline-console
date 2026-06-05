@@ -35,11 +35,15 @@ button {
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
   display: flex;
   flex-direction: column;
   align-self: start;
+  height: 100vh;
   min-height: 100vh;
   gap: 22px;
+  overflow-y: auto;
   padding: 24px;
   color: #f8fbfc;
   background:
@@ -221,18 +225,18 @@ button {
 
 .checkoutFlow {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr);
+  grid-template-columns: 170px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
 
 .checkoutFlow.seatStepFlow {
-  grid-template-columns: 190px minmax(0, 1fr);
+  grid-template-columns: 150px minmax(0, 1fr);
   align-items: stretch;
 }
 
 .seatStepFlow .checkoutProgress {
-  min-height: 250px;
+  min-height: 100%;
 }
 
 .seatStepFlow .panel {
@@ -244,32 +248,43 @@ button {
 .checkoutProgress {
   display: grid;
   grid-template-columns: 1fr;
+  grid-template-rows: min-content minmax(72px, 1fr) min-content minmax(72px, 1fr) min-content;
   align-items: stretch;
-  gap: 10px;
-  padding: 18px;
+  gap: 0;
+  padding: 14px;
   background: #f6f8fb;
   border: 1px solid #dde5ec;
   border-radius: 8px;
 }
 
+.seatStepFlow .checkoutProgress {
+  grid-template-rows: min-content minmax(150px, 1fr) min-content minmax(150px, 1fr) min-content;
+}
+
 .progressItem {
+  position: relative;
+  z-index: 1;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  justify-items: start;
+  gap: 8px;
+  min-width: 0;
   color: #6c7480;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
+  text-align: left;
 }
 
 .progressItem span {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   place-items: center;
   color: #ffffff;
   background: #cfd6df;
   border-radius: 999px;
+  font-size: 12px;
 }
 
 .progressItem.done span,
@@ -283,9 +298,12 @@ button {
 }
 
 .progressLine {
-  width: 4px;
-  height: 38px;
-  margin-left: 12px;
+  align-self: stretch;
+  width: 3px;
+  height: calc(100% + 24px);
+  margin-top: -12px;
+  margin-bottom: -12px;
+  margin-left: 10.5px;
   background: #d6dce4;
   border-radius: 999px;
 }
@@ -447,47 +465,72 @@ button {
 
 .aircraftCabin {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(520px, 58%);
-  gap: 16px;
-  min-height: 260px;
-  max-height: 330px;
-  padding: 18px;
+  grid-template-columns: 1fr;
+  min-height: 340px;
+  padding: 14px;
   background: #f8fbfc;
-  border: 2px solid #c8d5de;
-  border-radius: 8px;
+  border: 2px solid #c9d5de;
+  border-radius: 10px 24px 24px 10px;
   overflow: hidden;
 }
 
 .cabinEmptySpace {
-  min-height: 210px;
+  display: none;
 }
 
 .aircraftSeatMap {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 48px;
-  gap: 8px;
-  align-content: center;
-  justify-content: start;
-  overflow-x: auto;
-  padding: 8px;
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 330px;
+  padding: 18px 22px;
+  overflow: hidden;
+  border: 1px solid #d7e0e7;
+  border-radius: 8px 20px 20px 8px;
+}
+
+.aircraftSeatDeck {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: fit-content;
+  min-height: 294px;
+  padding: 32px 0;
 }
 
 .aircraftSeatColumn {
   display: grid;
-  grid-template-rows: repeat(3, 36px) 18px repeat(3, 36px);
+  grid-template-rows: repeat(2, 36px) 26px repeat(3, 36px) 26px repeat(2, 36px);
   gap: 6px;
-  align-content: center;
+  align-content: start;
 }
 
-.aircraftAisleDot {
-  display: block;
-  width: 10px;
-  height: 10px;
-  place-self: center;
-  background: #0b6384;
-  border: 2px solid #0b2d3e;
-  border-radius: 999px;
+.aircraftWalkwayGap {
+  width: 44px;
+  min-height: 26px;
+  pointer-events: none;
+}
+
+.exitMark {
+  position: absolute;
+  left: 50%;
+  color: #7b8a96;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+  transform: translateX(-50%);
+}
+
+.exitMark.top {
+  top: 0;
+}
+
+.exitMark.bottom {
+  bottom: 0;
 }
 
 .seatPick {
@@ -986,10 +1029,11 @@ button {
 
 .bookingRouteMini {
   display: grid;
-  grid-template-columns: minmax(88px, 130px) minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(56px, 76px) minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
-  padding: 16px;
+  min-width: 0;
+  padding: 12px;
   background: #ffffff;
   border: 1px solid #dce6eb;
   border-radius: 8px;
@@ -998,10 +1042,10 @@ button {
 .miniCarrier {
   display: grid;
   align-content: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   color: #59636f;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .miniCarrier svg {
@@ -1010,13 +1054,17 @@ button {
 
 .miniCarrier strong {
   color: #2e3a45;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   line-height: 1.35;
+  white-space: nowrap;
 }
 
 .miniTimeline {
   display: grid;
-  grid-template-columns: 72px minmax(110px, 1fr) 72px;
-  gap: 12px;
+  grid-template-columns: 54px minmax(72px, 1fr) 54px;
+  gap: 8px;
   align-items: center;
   min-width: 0;
 }
@@ -1030,13 +1078,13 @@ button {
 
 .miniPoint strong {
   color: #121820;
-  font-size: 20px;
+  font-size: 16px;
   line-height: 1;
 }
 
 .miniPoint span {
   color: #646f7b;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -1054,7 +1102,7 @@ button {
 
 .miniTrack > span {
   color: #5d6672;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
 }
 
@@ -1086,6 +1134,17 @@ button {
   height: 9px;
   background: #e91e63;
   border-radius: 999px;
+}
+
+.miniTrack .direct,
+.miniTrack .stopText {
+  max-width: 100%;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.miniTrack .stopText {
+  gap: 3px;
 }
 
 .itineraryDetails {
@@ -1884,7 +1943,9 @@ tr:last-child td {
     grid-auto-rows: min-content;
     align-items: center;
     gap: 14px;
+    height: auto;
     min-height: 0;
+    overflow: visible;
     padding: 16px;
   }
 
