@@ -207,7 +207,7 @@ button {
 
 .contentGrid {
   display: grid;
-  grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -608,8 +608,6 @@ button {
 .pendingBookingsPanel {
   display: grid;
   gap: 10px;
-  padding-top: 14px;
-  border-top: 1px solid #e2eaef;
 }
 
 .sectionHeaderSmall {
@@ -1245,6 +1243,21 @@ button {
   color: #e0005a;
 }
 
+.segmentStatus {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.segmentStatus.cancelled {
+  color: #8b251b;
+  background: #ffe2de;
+}
+
 .segmentTimeline {
   display: grid;
   grid-template-columns: 54px 18px minmax(0, 1fr);
@@ -1636,11 +1649,11 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 24px;
+  padding: 0 8px;
   white-space: nowrap;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -1903,6 +1916,12 @@ button {
   border-radius: 8px;
 }
 
+.accountBookingsPanel th,
+.accountBookingsPanel td {
+  padding: 12px 6px;
+  overflow-wrap: anywhere;
+}
+
 table {
   width: 100%;
   min-width: 780px;
@@ -1985,6 +2004,21 @@ tr:last-child td {
   background: #ffffff;
 }
 
+.accountBookingDetails .bookingRouteMini {
+  width: calc(100% - 40px);
+  max-width: calc(100% - 40px);
+  justify-self: start;
+}
+
+.accountBookingDetails .segmentLine {
+  height: 48px;
+  box-shadow:
+    0 -20px 0 -1px #ffffff,
+    0 -20px 0 2px #c8d0da,
+    0 20px 0 -1px #ffffff,
+    0 20px 0 2px #c8d0da;
+}
+
 .accountBookingRoute {
   display: grid;
   gap: 4px;
@@ -2022,6 +2056,7 @@ tr:last-child td {
 }
 
 .status.cancelled,
+.status.partial_cancelled,
 .status.voided,
 .status.failed {
   color: #8b251b;
