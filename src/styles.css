@@ -231,12 +231,12 @@ button {
 }
 
 .checkoutFlow.seatStepFlow {
-  grid-template-columns: 150px minmax(0, 1fr);
+  grid-template-columns: 170px minmax(0, 1fr);
   align-items: stretch;
 }
 
 .seatStepFlow .checkoutProgress {
-  min-height: 100%;
+  min-height: 0;
 }
 
 .seatStepFlow .panel {
@@ -250,15 +250,13 @@ button {
   grid-template-columns: 1fr;
   grid-template-rows: min-content minmax(72px, 1fr) min-content minmax(72px, 1fr) min-content;
   align-items: stretch;
+  align-self: start;
   gap: 0;
+  height: 420px;
   padding: 14px;
   background: #f6f8fb;
   border: 1px solid #dde5ec;
   border-radius: 8px;
-}
-
-.seatStepFlow .checkoutProgress {
-  grid-template-rows: min-content minmax(150px, 1fr) min-content minmax(150px, 1fr) min-content;
 }
 
 .progressItem {
@@ -605,6 +603,79 @@ button {
 
 .accountLoginPanel {
   max-width: 520px;
+}
+
+.pendingBookingsPanel {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid #e2eaef;
+}
+
+.sectionHeaderSmall {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #263746;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.sectionHeaderSmall span {
+  display: grid;
+  min-width: 24px;
+  height: 24px;
+  place-items: center;
+  color: #ffffff;
+  background: #138a9e;
+  border-radius: 999px;
+}
+
+.mutedText {
+  margin: 0;
+  color: #748392;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pendingBookingList {
+  display: grid;
+  gap: 10px;
+}
+
+.pendingBookingItem {
+  display: grid;
+  gap: 10px;
+}
+
+.pendingBookingItem > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  width: 100%;
+  padding: 12px;
+  color: #263746;
+  background: #f8fbfc;
+  border: 1px solid #dce6eb;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.pendingBookingItem.active > button {
+  background: #edf9fb;
+  border-color: #76c6d0;
+}
+
+.pendingBookingItem span,
+.pendingBookingItem strong {
+  font-weight: 900;
+}
+
+.pendingBookingItem small {
+  grid-column: 1 / -1;
+  color: #71808c;
+  font-weight: 700;
 }
 
 .sideRail {
@@ -1864,6 +1935,14 @@ tr:last-child td {
   border-bottom: 0;
 }
 
+.bookingRow.clickable {
+  cursor: pointer;
+}
+
+.bookingRow.clickable:hover td {
+  background: #f7fbfc;
+}
+
 .bookingRow.active td {
   background: #fff8f7;
 }
@@ -1880,6 +1959,53 @@ tr:last-child td {
   border-top: 1px solid #f0c4bf;
   border-radius: 0;
   box-shadow: none;
+}
+
+.previewRow .accountPaymentPreview {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid #bee3e9;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.accountPaymentPreview {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #dce6eb;
+  border-radius: 8px;
+}
+
+.accountBookingDetails {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  background: #ffffff;
+}
+
+.accountBookingRoute {
+  display: grid;
+  gap: 4px;
+  color: #1d3045;
+}
+
+.accountBookingRoute strong {
+  font-size: 17px;
+}
+
+.accountBookingRoute span {
+  color: #667684;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.accountBookingDetails .cancelPreview,
+.accountBookingDetails .accountPaymentPreview {
+  padding: 14px;
+  border: 1px solid #dce6eb;
+  border-radius: 8px;
 }
 
 .status {
@@ -1970,6 +2096,7 @@ tr:last-child td {
 
   .checkoutProgress {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    height: auto;
   }
 
   .progressItem {

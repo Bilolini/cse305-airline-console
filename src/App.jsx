@@ -1795,11 +1795,15 @@ function AccountPanel() {
   const [account, setAccount] = useState(null);
   const [bookings, setBookings] = useState([]);
   const [bookingView, setBookingView] = useState("current");
+  const [activeBooking, setActiveBooking] = useState(null);
   const [cancellationPreview, setCancellationPreview] = useState(null);
+  const [paymentPreview, setPaymentPreview] = useState(null);
   const [state, setState] = useState({ loading: false, error: "", success: "" });
-  const currentBookings = bookings.filter(isCurrentBooking);
-  const pastBookings = bookings.filter((booking) => !isCurrentBooking(booking));
+  const pendingBookings = bookings.filter(isPendingPaymentBooking);
+  const currentBookings = bookings.filter((booking) => !isPendingPaymentBooking(booking) && isCurrentBooking(booking));
+  const pastBookings = bookings.filter((booking) => !isPendingPaymentBooking(booking) && !isCurrentBooking(booking));
   const visibleBookings = bookingView === "current" ? currentBookings : pastBookings;
+  const totalRefund = bookings.reduce((total, booking) => total + getBookingRefundAmount(booking), 0);
 
   async function loadBookings(accountId) {
     const data = await listBookings(accountId);
@@ -1831,8 +1835,31 @@ function AccountPanel() {
       if (booking.booking_status === "CONFIRMED") {
         feeInfo = await calculateCancellationFee(booking.booking_id);
       }
+      setPaymentPreview(null);
+      setActiveBooking(booking);
       setCancellationPreview({ booking, feeInfo });
       return "Cancellation preview loaded";
+    });
+  }
+
+  function handleSelectBooking(booking) {
+    const isSameBooking = activeBooking?.booking_id === booking.booking_id;
+    setActiveBooking(isSameBooking ? null : booking);
+    setCancellationPreview(null);
+    setPaymentPreview(isPendingPaymentBooking(booking) && !isSameBooking ? { booking, method: "CREDIT_CARD" } : null);
+  }
+
+  async function handleConfirmAccountPayment(event) {
+    event.preventDefault();
+    if (!account || !paymentPreview) return;
+    await runAction(setState, async () => {
+      const result = await payBooking({
+        bookingId: paymentPreview.booking.booking_id,
+        paymentMethod: paymentPreview.method
+      });
+      setPaymentPreview(null);
+      const data = await loadBookings(account.account_id);
+      return `Payment confirmed. Ticket ${result?.ticket_no ?? "issued"}. ${data.length} booking${data.length === 1 ? "" : "s"} refreshed`;
     });
   }
 
@@ -1844,6 +1871,7 @@ function AccountPanel() {
         bookingId: cancellationPreview.booking.booking_id
       });
       setCancellationPreview(null);
+      setActiveBooking(null);
       const data = await loadBookings(account.account_id);
       return `${data.length} booking${data.length === 1 ? "" : "s"} refreshed`;
     });
@@ -1897,7 +1925,21 @@ function AccountPanel() {
             <dt>Email</dt>
             <dd>{account.email_address}</dd>
           </div>
+          <div>
+            <dt>Refunds</dt>
+            <dd>{formatMoney(totalRefund)}</dd>
+          </div>
         </dl>
+        <PendingBookingsPanel
+          bookings={pendingBookings}
+          activeBooking={activeBooking}
+          activePayment={paymentPreview}
+          onSelectBooking={handleSelectBooking}
+          onConfirmPayment={handleConfirmAccountPayment}
+          onPaymentMethodChange={(method) => setPaymentPreview((current) => current ? { ...current, method } : current)}
+          onDismissPayment={() => setPaymentPreview(null)}
+          loading={state.loading}
+        />
       </section>
 
       <section className="panel wide">
@@ -1911,6 +1953,8 @@ function AccountPanel() {
                 onChange={(value) => {
                   setBookingView(value);
                   setCancellationPreview(null);
+                  setPaymentPreview(null);
+                  setActiveBooking(null);
                 }}
                 options={[
                   ["current", "Current"],
@@ -1931,8 +1975,10 @@ function AccountPanel() {
         />
         <BookingTable
           bookings={visibleBookings}
-          onCancelPick={bookingView === "current" ? handlePreviewCancel : undefined}
+          activeBooking={activeBooking}
           activePreview={cancellationPreview}
+          onSelectBooking={handleSelectBooking}
+          onCancelPick={bookingView === "current" ? handlePreviewCancel : undefined}
           onConfirmCancel={handleConfirmCancel}
           onDismissCancel={() => setCancellationPreview(null)}
           cancelLoading={state.loading}
@@ -1945,7 +1991,171 @@ function AccountPanel() {
 function isCurrentBooking(booking) {
   const departure = booking.flight_seat?.flight?.departure_ts;
   const isUpcoming = departure ? new Date(departure).getTime() >= Date.now() : true;
-  return isUpcoming && ["PENDING_PAYMENT", "CONFIRMED"].includes(booking.booking_status);
+  return isUpcoming && ["PENDING", "PENDING_PAYMENT", "HELD", "CONFIRMED"].includes(
+    String(booking.booking_status ?? "").toUpperCase()
+  );
+}
+
+function isPendingPaymentBooking(booking) {
+  return ["PENDING", "PENDING_PAYMENT", "HELD"].includes(String(booking.booking_status ?? "").toUpperCase());
+}
+
+function getBookingAmount(booking) {
+  const payment = Array.isArray(booking.payment) ? booking.payment[0] : booking.payment;
+  return Number(payment?.amount ?? booking.flight_seat?.seat_price ?? 0);
+}
+
+function getBookingRefundAmount(booking) {
+  const refunds = Array.isArray(booking.refund) ? booking.refund : booking.refund ? [booking.refund] : [];
+  return refunds.reduce((total, refund) => total + Number(refund?.amount ?? 0), 0);
+}
+
+function getBookingRouteLabel(booking) {
+  const route = booking.flight_seat?.flight?.flight_schedule?.route;
+  return `${route?.departure?.iata_code ?? "—"} → ${route?.arrival?.iata_code ?? "—"}`;
+}
+
+function isCancelableBooking(booking) {
+  return ["CONFIRMED"].includes(String(booking.booking_status ?? "").toUpperCase());
+}
+
+function PendingBookingsPanel({
+  bookings,
+  activeBooking,
+  activePayment,
+  onSelectBooking,
+  onConfirmPayment,
+  onPaymentMethodChange,
+  onDismissPayment,
+  loading
+}) {
+  return (
+    <div className="pendingBookingsPanel">
+      <div className="sectionHeaderSmall">
+        <strong>Pending Payments</strong>
+        <span>{bookings.length}</span>
+      </div>
+      {!bookings.length ? (
+        <p className="mutedText">No pending payments.</p>
+      ) : (
+        <div className="pendingBookingList">
+          {bookings.map((booking) => {
+            const isActive = activeBooking?.booking_id === booking.booking_id;
+            return (
+              <div className={isActive ? "pendingBookingItem active" : "pendingBookingItem"} key={booking.booking_id}>
+                <button onClick={() => onSelectBooking(booking)} type="button">
+                  <span>{getBookingRouteLabel(booking)}</span>
+                  <strong>{formatMoney(getBookingAmount(booking))}</strong>
+                  <small>{formatDateTime(booking.flight_seat?.flight?.departure_ts)}</small>
+                </button>
+                {isActive && activePayment?.booking?.booking_id === booking.booking_id && (
+                  <AccountBookingDetails
+                    booking={booking}
+                    paymentPreview={activePayment}
+                    onConfirmPayment={onConfirmPayment}
+                    onPaymentMethodChange={onPaymentMethodChange}
+                    onDismissPayment={onDismissPayment}
+                    loading={loading}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AccountBookingDetails({
+  booking,
+  cancellationPreview,
+  paymentPreview,
+  onPreviewCancel,
+  onConfirmCancel,
+  onDismissCancel,
+  onConfirmPayment,
+  onPaymentMethodChange,
+  onDismissPayment,
+  loading
+}) {
+  const seat = booking.flight_seat;
+  const flight = seat?.flight;
+  const schedule = flight?.flight_schedule;
+  const route = schedule?.route;
+  const ticket = Array.isArray(booking.ticket) ? booking.ticket[0] : booking.ticket;
+  const refundAmount = getBookingRefundAmount(booking);
+
+  return (
+    <div className="accountBookingDetails">
+      <div className="accountBookingRoute">
+        <strong>{route?.departure?.city ?? route?.departure?.iata_code ?? "Departure"} → {route?.arrival?.city ?? route?.arrival?.iata_code ?? "Arrival"}</strong>
+        <span>{route?.departure?.iata_code ?? "—"} → {route?.arrival?.iata_code ?? "—"}</span>
+      </div>
+      <div className="classGrid">
+        <div className="metric">
+          <span>Flight</span>
+          <strong>{schedule?.flight_no ?? "—"}</strong>
+        </div>
+        <div className="metric">
+          <span>Departure</span>
+          <strong>{formatDateTime(flight?.departure_ts)}</strong>
+        </div>
+        <div className="metric">
+          <span>Arrival</span>
+          <strong>{formatDateTime(flight?.arrival_ts)}</strong>
+        </div>
+        <div className="metric">
+          <span>Seat</span>
+          <strong>{seat?.aircraft_model_seat?.seat_no ?? "—"}</strong>
+        </div>
+        <div className="metric">
+          <span>Cabin</span>
+          <strong>{seat?.aircraft_model_seat?.seat_class?.class_name ?? "—"}</strong>
+        </div>
+        <div className="metric">
+          <span>Amount</span>
+          <strong>{formatMoney(getBookingAmount(booking))}</strong>
+        </div>
+        <div className="metric">
+          <span>Ticket</span>
+          <strong>{ticket?.ticket_no ?? "—"}</strong>
+        </div>
+        <div className="metric">
+          <span>Refund</span>
+          <strong>{formatMoney(refundAmount)}</strong>
+        </div>
+      </div>
+
+      {paymentPreview?.booking?.booking_id === booking.booking_id && (
+        <AccountPaymentPreview
+          preview={paymentPreview}
+          onConfirm={onConfirmPayment}
+          onDismiss={onDismissPayment}
+          onMethodChange={onPaymentMethodChange}
+          loading={loading}
+        />
+      )}
+
+      {cancellationPreview?.booking?.booking_id === booking.booking_id ? (
+        <CancellationPreview
+          preview={cancellationPreview}
+          onConfirm={onConfirmCancel}
+          onDismiss={onDismissCancel}
+          loading={loading}
+        />
+      ) : (
+        isCancelableBooking(booking) && onPreviewCancel && (
+          <div className="buttonGroup">
+            <button className="dangerButton" onClick={() => onPreviewCancel(booking)} disabled={loading} type="button">
+              <RotateCcw size={17} />
+              <span>Cancel Booking</span>
+            </button>
+          </div>
+        )
+      )}
+    </div>
+  );
 }
 
 function CancellationPreview({ preview, onConfirm, onDismiss, loading }) {
@@ -1986,6 +2196,62 @@ function CancellationPreview({ preview, onConfirm, onDismiss, loading }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function AccountPaymentPreview({ preview, onConfirm, onDismiss, onMethodChange, loading }) {
+  const { booking, method } = preview;
+  const seat = booking.flight_seat;
+  const flight = seat?.flight;
+  const route = flight?.flight_schedule?.route;
+  const amount = getBookingAmount(booking);
+  const methods = [
+    ["CREDIT_CARD", "Credit Card"],
+    ["MOBILE_PAY", "Mobile Pay"],
+    ["BANK_TRANSFER", "Bank Transfer"],
+    ["PAYPAL", "PayPal"]
+  ];
+
+  return (
+    <form className="accountPaymentPreview" onSubmit={onConfirm}>
+      <div className="classGrid">
+        <div className="metric">
+          <span>Route</span>
+          <strong>{route?.departure?.iata_code ?? "—"} → {route?.arrival?.iata_code ?? "—"}</strong>
+        </div>
+        <div className="metric">
+          <span>Seat</span>
+          <strong>{seat?.aircraft_model_seat?.seat_no ?? "—"}</strong>
+        </div>
+        <div className="metric">
+          <span>Amount</span>
+          <strong>{formatMoney(amount)}</strong>
+        </div>
+      </div>
+      <div className="paymentMethods">
+        {methods.map(([value, label]) => (
+          <label className={method === value ? "paymentMethod active" : "paymentMethod"} key={value}>
+            <input
+              type="radio"
+              name={`account-payment-${booking.booking_id}`}
+              value={value}
+              checked={method === value}
+              onChange={() => onMethodChange(value)}
+            />
+            <span>{label}</span>
+          </label>
+        ))}
+      </div>
+      <div className="buttonGroup">
+        <button className="secondaryButton" onClick={onDismiss} type="button">
+          Later
+        </button>
+        <button className="primaryButton" disabled={loading} type="submit">
+          <CreditCard size={17} />
+          <span>Confirm and Pay {formatMoney(amount)}</span>
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -2128,28 +2394,27 @@ function BookingPanel({ accountId }) {
 
 function BookingTable({
   bookings,
-  onCancelPick,
+  activeBooking,
   activePreview,
+  onSelectBooking,
+  onCancelPick,
   onConfirmCancel,
   onDismissCancel,
   cancelLoading
 }) {
   if (!bookings.length) return <EmptyState icon={Ticket} title="No bookings loaded" />;
-  const showActions = Boolean(onCancelPick);
-  const columnCount = showActions ? 7 : 6;
+  const columnCount = 5;
 
   return (
     <div className="tableWrap">
       <table>
         <thead>
           <tr>
-            <th>ID</th>
-            <th>Status</th>
             <th>Route</th>
+            <th>Date</th>
             <th>Seat</th>
             <th>Amount</th>
-            <th>Ticket</th>
-            {showActions && <th></th>}
+            <th>Status</th>
           </tr>
         </thead>
         <tbody>
@@ -2157,41 +2422,32 @@ function BookingTable({
             const seat = booking.flight_seat;
             const flight = seat?.flight;
             const route = flight?.flight_schedule?.route;
-            const payment = Array.isArray(booking.payment) ? booking.payment[0] : booking.payment;
-            const ticket = Array.isArray(booking.ticket) ? booking.ticket[0] : booking.ticket;
+            const isActive = activeBooking?.booking_id === booking.booking_id;
             const isPreviewOpen = activePreview?.booking?.booking_id === booking.booking_id;
             return (
               <React.Fragment key={booking.booking_id}>
-                <tr className={isPreviewOpen ? "bookingRow active" : "bookingRow"}>
-                  <td>{booking.booking_id}</td>
-                  <td><StatusBadge value={booking.booking_status} /></td>
+                <tr
+                  className={isActive || isPreviewOpen ? "bookingRow active clickable" : "bookingRow clickable"}
+                  onClick={() => onSelectBooking?.(booking)}
+                >
                   <td>
                     {route?.departure?.iata_code ?? "—"} → {route?.arrival?.iata_code ?? "—"}
-                    <small>{formatDateTime(flight?.departure_ts)}</small>
+                    <small>{flight?.flight_schedule?.flight_no ?? "—"}</small>
                   </td>
+                  <td>{formatDateTime(flight?.departure_ts)}</td>
                   <td>{seat?.aircraft_model_seat?.seat_no ?? "—"}</td>
-                  <td>{formatMoney(payment?.amount ?? seat?.seat_price)}</td>
-                  <td>{ticket?.ticket_no ?? "—"}</td>
-                  {showActions && (
-                    <td>
-                      <button
-                        className="dangerButton compactButton"
-                        onClick={() => onCancelPick(booking)}
-                        type="button"
-                        title="Preview cancellation fee"
-                      >
-                        Cancel
-                      </button>
-                    </td>
-                  )}
+                  <td>{formatMoney(getBookingAmount(booking))}</td>
+                  <td><StatusBadge value={booking.booking_status} /></td>
                 </tr>
-                {isPreviewOpen && (
+                {isActive && (
                   <tr className="previewRow">
                     <td colSpan={columnCount}>
-                      <CancellationPreview
-                        preview={activePreview}
-                        onConfirm={onConfirmCancel}
-                        onDismiss={onDismissCancel}
+                      <AccountBookingDetails
+                        booking={booking}
+                        cancellationPreview={activePreview}
+                        onPreviewCancel={onCancelPick}
+                        onConfirmCancel={onConfirmCancel}
+                        onDismissCancel={onDismissCancel}
                         loading={cancelLoading}
                       />
                     </td>
