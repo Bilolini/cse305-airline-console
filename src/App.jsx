@@ -18,6 +18,7 @@ import {
   Search,
   ShieldCheck,
   Ticket,
+  UserPlus,
   UserRound
 } from "lucide-react";
 import {
@@ -28,6 +29,7 @@ import {
   createFlightSchedule,
   expireBookingHolds,
   findAccountByEmailPassword,
+  findStaffByEmailPassword,
   generateFlights,
   getRevenueSummary,
   getRouteDetails,
@@ -132,6 +134,7 @@ function App() {
   const [routes, setRoutes] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [aircraft, setAircraft] = useState([]);
+  const [staffAccount, setStaffAccount] = useState(null);
   const [bootState, setBootState] = useState({ loading: false, error: "" });
 
   useEffect(() => {
@@ -225,15 +228,29 @@ function App() {
         )}
         {activeTab === "account" && <AccountPanel />}
         {activeTab === "staff" && (
-          <StaffPanel
-            schedules={schedules}
-            aircraft={aircraft}
-            airports={airports}
-            airlines={airlines}
-            routes={routes}
-          />
+          <StaffGate
+            staffAccount={staffAccount}
+            onStaffAccountChange={setStaffAccount}
+            title="Staff Login"
+          >
+            <StaffPanel
+              schedules={schedules}
+              aircraft={aircraft}
+              airports={airports}
+              airlines={airlines}
+              routes={routes}
+            />
+          </StaffGate>
         )}
-        {activeTab === "revenue" && <RevenuePanel />}
+        {activeTab === "revenue" && (
+          <StaffGate
+            staffAccount={staffAccount}
+            onStaffAccountChange={setStaffAccount}
+            title="Revenue Login"
+          >
+            <RevenuePanel />
+          </StaffGate>
+        )}
         {activeTab === "checkout" && (
           <CheckoutPanel
             seat={checkoutSeat}
@@ -1791,7 +1808,15 @@ function makeGuestPassword() {
 }
 
 function AccountPanel() {
+  const [accountMode, setAccountMode] = useState("login");
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [signupForm, setSignupForm] = useState({
+    firstName: "",
+    lastName: "",
+    phoneNumber: "+82",
+    email: "",
+    password: ""
+  });
   const [account, setAccount] = useState(null);
   const [bookings, setBookings] = useState([]);
   const [bookingView, setBookingView] = useState("current");
@@ -1814,6 +1839,31 @@ function AccountPanel() {
       setAccount(nextAccount);
       const data = await loadBookings(nextAccount.account_id);
       return `${data.length} booking${data.length === 1 ? "" : "s"} loaded`;
+    });
+  }
+
+  async function handleSignup(event) {
+    event.preventDefault();
+    await runAction(setState, async () => {
+      const phoneNumber = normalizeKoreanPhone(signupForm.phoneNumber);
+      if (!isKoreanPhone(phoneNumber)) {
+        throw new Error("Phone number must use Korean +82 format.");
+      }
+      if (!signupForm.password) {
+        throw new Error("Password is required.");
+      }
+
+      const nextAccount = await createAccount({
+        firstName: signupForm.firstName,
+        lastName: signupForm.lastName,
+        phoneNumber,
+        email: signupForm.email,
+        password: signupForm.password
+      });
+      setSignupForm((current) => ({ ...current, phoneNumber }));
+      setAccount(nextAccount);
+      const data = await loadBookings(nextAccount.account_id);
+      return `Account created. ${data.length} booking${data.length === 1 ? "" : "s"} loaded`;
     });
   }
 
@@ -1853,22 +1903,74 @@ function AccountPanel() {
     return (
       <div className="contentGrid">
         <section className="panel accountLoginPanel">
-          <PanelHeader icon={UserRound} title="Account Login" />
-          <form className="stackForm" onSubmit={handleLogin}>
-            <InputField
-              label="Email"
-              type="email"
-              value={loginForm.email}
-              onChange={(value) => setLoginForm({ ...loginForm, email: value })}
-            />
-            <InputField
-              label="Password"
-              type="password"
-              value={loginForm.password}
-              onChange={(value) => setLoginForm({ ...loginForm, password: value })}
-            />
-            <SubmitButton loading={state.loading} icon={UserRound} label="Login" />
-          </form>
+          <PanelHeader
+            icon={accountMode === "login" ? UserRound : UserPlus}
+            title={accountMode === "login" ? "Account Login" : "Create Account"}
+            action={
+              <SegmentedControl
+                value={accountMode}
+                onChange={(value) => {
+                  setAccountMode(value);
+                  setState({ loading: false, error: "", success: "" });
+                }}
+                options={[
+                  ["login", "Login"],
+                  ["signup", "Sign Up"]
+                ]}
+              />
+            }
+          />
+          {accountMode === "login" ? (
+            <form className="stackForm" onSubmit={handleLogin}>
+              <InputField
+                label="Email"
+                type="email"
+                value={loginForm.email}
+                onChange={(value) => setLoginForm({ ...loginForm, email: value })}
+              />
+              <InputField
+                label="Password"
+                type="password"
+                value={loginForm.password}
+                onChange={(value) => setLoginForm({ ...loginForm, password: value })}
+              />
+              <SubmitButton loading={state.loading} icon={UserRound} label="Login" />
+            </form>
+          ) : (
+            <form className="stackForm" onSubmit={handleSignup}>
+              <div className="twoCols">
+                <InputField
+                  label="First Name"
+                  value={signupForm.firstName}
+                  onChange={(value) => setSignupForm({ ...signupForm, firstName: value })}
+                />
+                <InputField
+                  label="Last Name"
+                  value={signupForm.lastName}
+                  onChange={(value) => setSignupForm({ ...signupForm, lastName: value })}
+                />
+              </div>
+              <InputField
+                label="Phone Number"
+                value={signupForm.phoneNumber}
+                onChange={(value) => setSignupForm({ ...signupForm, phoneNumber: value })}
+                placeholder="+821012345678"
+              />
+              <InputField
+                label="Email"
+                type="email"
+                value={signupForm.email}
+                onChange={(value) => setSignupForm({ ...signupForm, email: value })}
+              />
+              <InputField
+                label="Password"
+                type="password"
+                value={signupForm.password}
+                onChange={(value) => setSignupForm({ ...signupForm, password: value })}
+              />
+              <SubmitButton loading={state.loading} icon={UserPlus} label="Create Account" />
+            </form>
+          )}
           <ActionState state={state} />
         </section>
       </div>
@@ -2215,6 +2317,70 @@ const weekdayOptions = [
   [6, "Saturday"],
   [0, "Sunday"]
 ];
+
+function StaffGate({ staffAccount, onStaffAccountChange, title, children }) {
+  const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [state, setState] = useState({ loading: false, error: "", success: "" });
+
+  async function handleLogin(event) {
+    event.preventDefault();
+    await runAction(setState, async () => {
+      const account = await findStaffByEmailPassword(loginForm);
+      onStaffAccountChange(account);
+      return `${account.first_name} ${account.last_name} verified as ${account.staff_role}`;
+    });
+  }
+
+  if (staffAccount) {
+    return (
+      <div className="protectedStack">
+        <div className="staffSessionBar">
+          <div>
+            <span>Staff Session</span>
+            <strong>
+              {staffAccount.first_name} {staffAccount.last_name} · {staffAccount.staff_role}
+            </strong>
+          </div>
+          <button
+            className="secondaryButton"
+            onClick={() => {
+              onStaffAccountChange(null);
+              setState({ loading: false, error: "", success: "" });
+            }}
+            type="button"
+          >
+            Logout
+          </button>
+        </div>
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <div className="contentGrid">
+      <section className="panel accountLoginPanel">
+        <PanelHeader icon={ShieldCheck} title={title} />
+        <form className="stackForm" onSubmit={handleLogin}>
+          <InputField
+            label="Email"
+            type="email"
+            value={loginForm.email}
+            onChange={(value) => setLoginForm({ ...loginForm, email: value })}
+          />
+          <InputField
+            label="Password"
+            type="password"
+            value={loginForm.password}
+            onChange={(value) => setLoginForm({ ...loginForm, password: value })}
+          />
+          <SubmitButton loading={state.loading} icon={ShieldCheck} label="Verify Staff" />
+        </form>
+        <ActionState state={state} />
+      </section>
+    </div>
+  );
+}
 
 function StaffPanel({ schedules, aircraft, airports, airlines, routes }) {
   const [localSchedules, setLocalSchedules] = useState(schedules);

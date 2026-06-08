@@ -607,6 +607,38 @@ button {
   max-width: 520px;
 }
 
+.protectedStack {
+  display: grid;
+  gap: 16px;
+}
+
+.staffSessionBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  color: #263847;
+  background: #ffffff;
+  border: 1px solid #dbe3e8;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(40, 55, 66, 0.07);
+}
+
+.staffSessionBar span {
+  display: block;
+  color: #607080;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.staffSessionBar strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 14px;
+}
+
 .sideRail {
   grid-column: 1 / -1;
 }

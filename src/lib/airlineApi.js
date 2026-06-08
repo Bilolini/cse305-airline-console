@@ -37,6 +37,27 @@ export async function findAccountByEmailPassword(values) {
   return account;
 }
 
+export async function findStaffByEmailPassword(values) {
+  const account = await findAccountByEmailPassword(values);
+  const { data, error } = await requireSupabase()
+    .from("staff")
+    .select("staff_id,staff_role")
+    .eq("staff_id", account.account_id)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) {
+    throw new Error("This account is not authorized for staff pages.");
+  }
+
+  return {
+    ...account,
+    staff_id: data.staff_id,
+    staff_role: data.staff_role
+  };
+}
+
 export async function createAccount(values) {
   const passwordHash = await hashPassword(values.password);
   const { data, error } = await requireSupabase()
@@ -52,6 +73,12 @@ export async function createAccount(values) {
     .single();
 
   if (error) throw error;
+
+  const { error: customerError } = await requireSupabase()
+    .from("customer")
+    .upsert({ customer_id: data.account_id }, { onConflict: "customer_id" });
+
+  if (customerError) throw customerError;
   return data;
 }
 
