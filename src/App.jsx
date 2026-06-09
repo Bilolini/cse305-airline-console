@@ -43,20 +43,77 @@ import {
 import { isSupabaseConfigured } from "./lib/supabase";
 import { formatDateTime, formatMoney, formatPercent } from "./lib/format";
 
-const tabs = [
+const customerTabs = [
   { id: "search", label: "Search", icon: Search },
-  { id: "account", label: "Account", icon: UserRound },
+  { id: "account", label: "Account", icon: UserRound }
+];
+
+const staffTabs = [
   { id: "staff", label: "Staff", icon: CalendarPlus },
   { id: "revenue", label: "Revenue", icon: BarChart3 }
 ];
 
+const staffLoginTab = { id: "staffLogin", label: "Staff Login", icon: ShieldCheck };
 const today = new Date().toISOString().slice(0, 10);
+const accountSessionKey = "airline-account-session";
+const staffSessionKey = "airline-staff-session";
 const routeRankOptions = [
   ["cheapest", "Cheapest"],
   ["fastest", "Fastest"],
   ["fewestStops", "Fewest stops"],
   ["bestComfort", "Best comfort"]
 ];
+
+function readStoredAccount() {
+  try {
+    const stored = window.localStorage.getItem(accountSessionKey);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistAccountSession(account) {
+  try {
+    if (account) {
+      window.localStorage.setItem(accountSessionKey, JSON.stringify(account));
+      return;
+    }
+    window.localStorage.removeItem(accountSessionKey);
+  } catch {
+    // Account persistence is only a convenience; the app can still work without it.
+  }
+}
+
+function readStoredStaffSession() {
+  try {
+    const stored = window.localStorage.getItem(staffSessionKey);
+    return stored ? JSON.parse(stored) : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistStaffSession(session) {
+  try {
+    if (session) {
+      window.localStorage.setItem(staffSessionKey, JSON.stringify(session));
+      return;
+    }
+    window.localStorage.removeItem(staffSessionKey);
+  } catch {
+    // Staff persistence is demo-only convenience.
+  }
+}
+
+function accountToPassengerForm(account) {
+  return {
+    firstName: account?.first_name ?? "",
+    lastName: account?.last_name ?? "",
+    phoneNumber: account?.phone_number ?? "+82",
+    email: account?.email_address ?? ""
+  };
+}
 
 function formatAirportOption(airport) {
   return `${airport.iata_code} · ${airport.city}, ${airport.country}`;
@@ -105,6 +162,8 @@ function arrivalDayOffset(start, end) {
 function App() {
   const [activeTab, setActiveTab] = useState("search");
   const [checkoutSeat, setCheckoutSeat] = useState(null);
+  const [customerAccount, setCustomerAccount] = useState(() => readStoredAccount());
+  const [staffSession, setStaffSession] = useState(() => readStoredStaffSession());
   const [airports, setAirports] = useState([]);
   const [airlines, setAirlines] = useState([]);
   const [routes, setRoutes] = useState([]);
@@ -140,7 +199,16 @@ function App() {
     boot();
   }, []);
 
-  const selectedTab = tabs.find((tab) => tab.id === activeTab) ?? {
+  useEffect(() => {
+    if (!staffSession && ["staff", "revenue"].includes(activeTab)) {
+      setActiveTab("staffLogin");
+    }
+  }, [activeTab, staffSession]);
+
+  const visibleTabs = staffSession
+    ? [...customerTabs, ...staffTabs]
+    : [...customerTabs, staffLoginTab];
+  const selectedTab = visibleTabs.find((tab) => tab.id === activeTab) ?? {
     id: "checkout",
     label: "Checkout",
     icon: Ticket
@@ -149,6 +217,17 @@ function App() {
   function openCheckout(seat) {
     setCheckoutSeat(seat);
     setActiveTab("checkout");
+  }
+
+  function handleCustomerAccountChange(account) {
+    setCustomerAccount(account);
+    persistAccountSession(account);
+  }
+
+  function handleStaffSessionChange(session) {
+    setStaffSession(session);
+    persistStaffSession(session);
+    setActiveTab(session ? "staff" : "staffLogin");
   }
 
   return (
@@ -165,7 +244,7 @@ function App() {
         </div>
 
         <nav className="tabs" aria-label="Primary">
-          {tabs.map((tab) => {
+          {visibleTabs.map((tab) => {
             const Icon = tab.icon;
             return (
               <button
@@ -180,6 +259,15 @@ function App() {
             );
           })}
         </nav>
+
+        {staffSession && (
+          <div className="staffSessionCard">
+            <span>Staff #{staffSession.staffId}</span>
+            <button className="secondaryButton" onClick={() => handleStaffSessionChange(null)} type="button">
+              Log out
+            </button>
+          </div>
+        )}
 
         <ConnectionStatus bootState={bootState} />
       </aside>
@@ -201,8 +289,19 @@ function App() {
         {activeTab === "search" && (
           <SearchPanel airports={airports} onCheckout={openCheckout} />
         )}
-        {activeTab === "account" && <AccountPanel />}
-        {activeTab === "staff" && (
+        {activeTab === "account" && (
+          <AccountPanel
+            account={customerAccount}
+            onAccountChange={handleCustomerAccountChange}
+          />
+        )}
+        {activeTab === "staffLogin" && (
+          <StaffLoginPanel
+            staffSession={staffSession}
+            onStaffSessionChange={handleStaffSessionChange}
+          />
+        )}
+        {activeTab === "staff" && staffSession && (
           <StaffPanel
             schedules={schedules}
             aircraft={aircraft}
@@ -211,11 +310,14 @@ function App() {
             routes={routes}
           />
         )}
-        {activeTab === "revenue" && <RevenuePanel />}
+        {activeTab === "revenue" && staffSession && <RevenuePanel />}
         {activeTab === "checkout" && (
           <CheckoutPanel
             seat={checkoutSeat}
+            account={customerAccount}
+            onAccountChange={handleCustomerAccountChange}
             onBack={() => setActiveTab("search")}
+            onCheckoutComplete={() => setActiveTab("account")}
           />
         )}
       </section>
@@ -249,6 +351,41 @@ function Alert({ tone = "info", message }) {
     <div className={`alert ${tone}`}>
       <ShieldCheck size={18} />
       <span>{message}</span>
+    </div>
+  );
+}
+
+function StaffLoginPanel({ staffSession, onStaffSessionChange }) {
+  const [staffId, setStaffId] = useState(staffSession?.staffId ?? "");
+  const [state, setState] = useState({ loading: false, error: "", success: "" });
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    await runAction(setState, async () => {
+      const normalizedStaffId = String(staffId ?? "").trim();
+      if (!normalizedStaffId) {
+        throw new Error("Enter a staff id.");
+      }
+      onStaffSessionChange?.({ staffId: normalizedStaffId });
+      return `Staff #${normalizedStaffId} logged in`;
+    });
+  }
+
+  return (
+    <div className="contentGrid">
+      <section className="panel accountLoginPanel">
+        <PanelHeader icon={ShieldCheck} title="Staff Login" />
+        <form className="stackForm" onSubmit={handleSubmit}>
+          <InputField
+            label="Staff ID"
+            value={staffId}
+            onChange={setStaffId}
+            placeholder="1001"
+          />
+          <SubmitButton loading={state.loading} icon={ShieldCheck} label="Login" />
+        </form>
+        <ActionState state={state} />
+      </section>
     </div>
   );
 }
@@ -786,7 +923,7 @@ function RouteResults({
   );
 }
 
-function CheckoutPanel({ seat, onBack }) {
+function CheckoutPanel({ seat, account, onAccountChange, onBack, onCheckoutComplete }) {
   const [mode, setMode] = useState("login");
   const [checkoutStep, setCheckoutStep] = useState("info");
   const [checkoutAccount, setCheckoutAccount] = useState(null);
@@ -794,13 +931,8 @@ function CheckoutPanel({ seat, onBack }) {
   const [selectedSeatChoice, setSelectedSeatChoice] = useState(() => getInitialSeatChoice(seat));
   const [selectedSeatsByLeg, setSelectedSeatsByLeg] = useState(() => getInitialSeatsByLeg(seat));
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
-  const [existingAccount, setExistingAccount] = useState(null);
-  const [existingForm, setExistingForm] = useState({
-    firstName: "",
-    lastName: "",
-    phoneNumber: "+82",
-    email: ""
-  });
+  const [existingAccount, setExistingAccount] = useState(account);
+  const [existingForm, setExistingForm] = useState(() => accountToPassengerForm(account));
   const [newForm, setNewForm] = useState({
     firstName: "",
     lastName: "",
@@ -815,9 +947,20 @@ function CheckoutPanel({ seat, onBack }) {
   const [paymentDeadline, setPaymentDeadline] = useState(null);
   const [state, setState] = useState({ loading: false, error: "", success: "" });
 
+  useEffect(() => {
+    if (!account || checkoutStep !== "info" || bookingResult || paymentResult) return;
+    setMode("login");
+    setExistingAccount(account);
+    setExistingForm(accountToPassengerForm(account));
+    setCheckoutAccount(null);
+  }, [account?.account_id, checkoutStep, bookingResult, paymentResult]);
+
   function switchMode(nextMode) {
     setMode(nextMode);
-    setExistingAccount(null);
+    setExistingAccount(nextMode === "login" ? account : null);
+    if (nextMode === "login" && account) {
+      setExistingForm(accountToPassengerForm(account));
+    }
     setCheckoutAccount(null);
     setBookingResult(null);
     setPaymentResult(null);
@@ -905,7 +1048,7 @@ function CheckoutPanel({ seat, onBack }) {
 
   async function handleConfirmPayment(event) {
     event.preventDefault();
-    await runAction(setState, async () => {
+    const result = await runAction(setState, async () => {
       const bookingsToPay = bookingResult?.bookings ?? [bookingResult?.booking].filter(Boolean);
       const results = [];
       for (const booking of bookingsToPay) {
@@ -917,6 +1060,13 @@ function CheckoutPanel({ seat, onBack }) {
       setPaymentResult(results[0] ? { ...results[0], tickets: results } : null);
       return `Payment confirmed for ${results.length} booking${results.length === 1 ? "" : "s"}`;
     });
+    if (
+      result?.ok &&
+      account?.account_id &&
+      String(account.account_id) === String(bookingResult?.account?.account_id)
+    ) {
+      onCheckoutComplete?.();
+    }
   }
 
   async function handleLogin(event) {
@@ -930,6 +1080,7 @@ function CheckoutPanel({ seat, onBack }) {
         phoneNumber: account.phone_number ?? "+82",
         email: account.email_address ?? ""
       });
+      onAccountChange?.(account);
       return "Account loaded";
     });
   }
@@ -952,6 +1103,7 @@ function CheckoutPanel({ seat, onBack }) {
       });
 
       setCheckoutAccount(account);
+      onAccountChange?.(account);
       setCheckoutStep("seat");
       return "Passenger info saved";
     });
@@ -979,6 +1131,9 @@ function CheckoutPanel({ seat, onBack }) {
       });
 
       setCheckoutAccount(account);
+      if (newForm.saveInfo) {
+        onAccountChange?.(account);
+      }
       setCheckoutStep("seat");
       return "Passenger info saved";
     });
@@ -1594,15 +1749,10 @@ function PaymentStep({ deadline, method, onMethodChange, onSubmit, amount, loadi
 
 function BookingInfoCard({ seat, bookingResult, paymentResult }) {
   const info = seat.routeInfo ?? {};
-  const layovers = info.layovers ?? [];
-  const itineraryLegs = info.legs ?? [];
   return (
     <section className="panel bookingInfoPanel">
       <PanelHeader icon={Plane} title="Booking Info" />
-      <BookingRouteMini info={info} />
-      {itineraryLegs.length > 0 && (
-        <ItineraryDetails legs={itineraryLegs} layovers={layovers} />
-      )}
+      <BookingInfoItinerary info={info} />
       <PriceDetails seat={seat} />
       {bookingResult && (
         <div className="bookingReceipt">
@@ -1617,6 +1767,19 @@ function BookingInfoCard({ seat, bookingResult, paymentResult }) {
         </div>
       )}
     </section>
+  );
+}
+
+function BookingInfoItinerary({ info }) {
+  const layovers = info.layovers ?? [];
+  const itineraryLegs = info.legs ?? [];
+  return (
+    <>
+      <BookingRouteMini info={info} />
+      {itineraryLegs.length > 0 && (
+        <ItineraryDetails legs={itineraryLegs} layovers={layovers} />
+      )}
+    </>
   );
 }
 
@@ -1679,16 +1842,16 @@ function ItineraryDetails({ legs, layovers }) {
               )}
             </div>
             <div className="segmentTimeline">
-              <span>{formatFlightTime(leg.departureTime)}</span>
+              <span className="segmentDepartTime">{formatFlightTime(leg.departureTime)}</span>
               <div className="segmentLine" />
-              <p><strong>{leg.originCode}</strong> {leg.originName}</p>
+              <p className="segmentOrigin"><strong>{leg.originCode}</strong> {leg.originName}</p>
               <span className="segmentDuration">
                 <Clock size={15} />
                 {formatDurationMinutes(minutesBetween(leg.departureTime, leg.arrivalTime))}
               </span>
-              <small>Flight duration</small>
-              <span>{formatFlightTime(leg.arrivalTime)}</span>
-              <p><strong>{leg.destinationCode}</strong> {leg.destinationName}</p>
+              <small className="segmentDurationLabel">Flight duration</small>
+              <span className="segmentArrivalTime">{formatFlightTime(leg.arrivalTime)}</span>
+              <p className="segmentDestination"><strong>{leg.destinationCode}</strong> {leg.destinationName}</p>
             </div>
           </div>
           {layovers[index] && (
@@ -1782,9 +1945,8 @@ function makeGuestPassword() {
   return `guest-${crypto.randomUUID?.() ?? Date.now()}`;
 }
 
-function AccountPanel() {
+function AccountPanel({ account, onAccountChange }) {
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
-  const [account, setAccount] = useState(null);
   const [bookings, setBookings] = useState([]);
   const [bookingView, setBookingView] = useState("current");
   const [activeBooking, setActiveBooking] = useState(null);
@@ -1805,6 +1967,42 @@ function AccountPanel() {
   }[bookingView];
   const totalRefund = bookings.reduce((total, booking) => total + getBookingRefundAmount(booking), 0);
 
+  useEffect(() => {
+    let ignored = false;
+
+    if (!account) {
+      setBookings([]);
+      setActiveBooking(null);
+      setActivePendingTripId(null);
+      setCancellationPreview(null);
+      setPaymentPreview(null);
+      setState({ loading: false, error: "", success: "" });
+      return undefined;
+    }
+
+    async function loadAccountBookings() {
+      setState({ loading: true, error: "", success: "" });
+      try {
+        const data = await listBookings(account.account_id);
+        if (ignored) return;
+        setBookings(data);
+        setState({
+          loading: false,
+          error: "",
+          success: `${data.length} booking${data.length === 1 ? "" : "s"} loaded`
+        });
+      } catch (error) {
+        if (ignored) return;
+        setState({ loading: false, error: error.message, success: "" });
+      }
+    }
+
+    loadAccountBookings();
+    return () => {
+      ignored = true;
+    };
+  }, [account?.account_id]);
+
   async function loadBookings(accountId) {
     const data = await listBookings(accountId);
     setBookings(data);
@@ -1815,9 +2013,8 @@ function AccountPanel() {
     event.preventDefault();
     await runAction(setState, async () => {
       const nextAccount = await findAccountByEmailPassword(loginForm);
-      setAccount(nextAccount);
-      const data = await loadBookings(nextAccount.account_id);
-      return `${data.length} booking${data.length === 1 ? "" : "s"} loaded`;
+      onAccountChange?.(nextAccount);
+      return "Account loaded";
     });
   }
 
@@ -1904,6 +2101,17 @@ function AccountPanel() {
     });
   }
 
+  function handleLogout() {
+    setLoginForm({ email: "", password: "" });
+    setBookings([]);
+    setActiveBooking(null);
+    setActivePendingTripId(null);
+    setCancellationPreview(null);
+    setPaymentPreview(null);
+    setState({ loading: false, error: "", success: "" });
+    onAccountChange?.(null);
+  }
+
   if (!account) {
     return (
       <div className="contentGrid">
@@ -1933,7 +2141,15 @@ function AccountPanel() {
   return (
     <div className="contentGrid">
       <section className="panel">
-        <PanelHeader icon={UserRound} title="Customer Account" />
+        <PanelHeader
+          icon={UserRound}
+          title="Customer Account"
+          action={
+            <button className="secondaryButton" onClick={handleLogout} type="button">
+              <span>Log out</span>
+            </button>
+          }
+        />
         <ActionState state={state} />
         <dl className="facts compactFacts">
           <div>
@@ -2262,8 +2478,9 @@ function AccountBookingDetails({
 
   return (
     <div className="accountBookingDetails">
-      <BookingRouteMini info={routeInfo} />
-      <ItineraryDetails legs={routeInfo.legs} layovers={routeInfo.layovers} />
+      <div className="bookingInfoPanel accountBookingInfoBlock">
+        <BookingInfoItinerary info={routeInfo} />
+      </div>
       <div className="classGrid">
         <div className="metric">
           <span>Seats</span>
@@ -3283,8 +3500,10 @@ async function runAction(setState, action) {
   try {
     const success = await action();
     setState({ loading: false, error: "", success });
+    return { ok: true, value: success };
   } catch (error) {
     setState({ loading: false, error: error.message, success: "" });
+    return { ok: false, error };
   }
 }
 
