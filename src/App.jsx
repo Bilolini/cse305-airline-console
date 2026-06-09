@@ -53,34 +53,12 @@ const tabs = [
 ];
 
 const today = new Date().toISOString().slice(0, 10);
-const searchStoragePrefix = "airline-search";
 const routeRankOptions = [
   ["cheapest", "Cheapest"],
   ["fastest", "Fastest"],
   ["fewestStops", "Fewest stops"],
   ["bestComfort", "Best comfort"]
 ];
-
-function usePersistentState(key, initialValue) {
-  const [value, setValue] = useState(() => {
-    try {
-      const stored = window.localStorage.getItem(key);
-      return stored ? JSON.parse(stored) : initialValue;
-    } catch {
-      return initialValue;
-    }
-  });
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-      // localStorage can be unavailable in private browsing or locked-down contexts.
-    }
-  }, [key, value]);
-
-  return [value, setValue];
-}
 
 function formatAirportOption(airport) {
   return `${airport.iata_code} · ${airport.city}, ${airport.country}`;
@@ -293,20 +271,20 @@ function Alert({ tone = "info", message }) {
 }
 
 function SearchPanel({ airports, onCheckout }) {
-  const [routeRank, setRouteRank] = usePersistentState(`${searchStoragePrefix}:rank`, "cheapest");
-  const [stopFilters, setStopFilters] = usePersistentState(`${searchStoragePrefix}:stops`, [0, 1, 2, 3]);
-  const [cabinClass, setCabinClass] = usePersistentState(`${searchStoragePrefix}:cabin`, "Economy");
-  const [travellers, setTravellers] = usePersistentState(`${searchStoragePrefix}:travellers`, {
+  const [routeRank, setRouteRank] = useState("cheapest");
+  const [stopFilters, setStopFilters] = useState([0, 1, 2, 3]);
+  const [cabinClass, setCabinClass] = useState("Economy");
+  const [travellers, setTravellers] = useState({
     adults: 1,
     children: 0
   });
-  const [detailForm, setDetailForm] = usePersistentState(`${searchStoragePrefix}:detail-form`, {
+  const [detailForm, setDetailForm] = useState({
     departureAirportId: "",
     arrivalAirportId: "",
     departureDate: today
   });
-  const [routes, setRoutes] = usePersistentState(`${searchStoragePrefix}:routes`, []);
-  const [selectedSeat, setSelectedSeat] = usePersistentState(`${searchStoragePrefix}:selected-seat`, null);
+  const [routes, setRoutes] = useState([]);
+  const [selectedSeat, setSelectedSeat] = useState(null);
   const [state, setState] = useState({ loading: false, error: "", success: "" });
   const airportIdOptions = airports.map((airport) => [
     airport.airport_id,
@@ -867,38 +845,45 @@ function CheckoutPanel({ seat, onBack }) {
   const checkoutSeat = buildCheckoutSeat(seat, selectedSeatChoice);
 
   async function createBookingForAccount(account) {
-    const firstSelectedSeat = selectedSeatsByLeg[0]?.[0];
-    const firstLeg = seat.routeInfo?.legs?.[0];
-    const seatToHold = firstSelectedSeat
-      ? {
-          ...buildCheckoutSeat(seat, selectedSeatChoice),
-          flight_seat_id: firstSelectedSeat.flightSeatId,
-          seat_no: firstSelectedSeat.seatNo,
-          flight_id: firstLeg?.flightId,
-          price: firstLeg?.price,
-          seat_class: firstLeg?.seatClass
-        }
-      : buildCheckoutSeat(seat, selectedSeatChoice);
-    let booking;
+    const legSelections = (seat.routeInfo?.legs ?? []).flatMap((leg, index) =>
+      (selectedSeatsByLeg[index] ?? []).map((seatItem) => ({
+        leg,
+        seatItem
+      }))
+    );
+    const fallbackSeat = buildCheckoutSeat(seat, selectedSeatChoice);
+    const selectionsToHold = legSelections.length
+      ? legSelections
+      : [{
+          leg: seat.routeInfo?.legs?.[0],
+          seatItem: {
+            flightSeatId: fallbackSeat.flight_seat_id,
+            seatNo: fallbackSeat.seat_no
+          }
+        }];
+    const bookings = [];
     try {
-      booking = await createBooking({
-        accountId: account.account_id,
-        flightSeatId: seatToHold.flight_seat_id
-      });
+      for (const selection of selectionsToHold) {
+        bookings.push(await createBooking({
+          accountId: account.account_id,
+          flightSeatId: selection.seatItem.flightSeatId
+        }));
+      }
     } catch (error) {
       if (/Flight seat .* does not exist/i.test(error.message)) {
         throw new Error(
-          `Could not create a booking hold for flight_seat_id ${seatToHold.flight_seat_id}. The selected option provided this seat ID, but create_booking could not read it. Check that the row exists in flight_seat and that the booking RPC has access to it.`
+          "Could not create one of the booking holds. A selected flight_seat_id could not be read by create_booking. Check that every selected seat exists in flight_seat and that the booking RPC has access to it."
         );
       }
       throw error;
     }
-    setBookingResult({ account, booking });
+    const booking = bookings[0];
+    setBookingResult({ account, booking, bookings });
     setPaymentDeadline(
       booking?.expires_at ?? booking?.v_expires_at ?? new Date(Date.now() + 15 * 60 * 1000).toISOString()
     );
     setCheckoutStep("payment");
-    return `Booking ${booking?.booking_id ?? ""} created`;
+    return `${bookings.length} booking hold${bookings.length === 1 ? "" : "s"} created`;
   }
 
   async function handleSeatNext(event) {
@@ -938,12 +923,16 @@ function CheckoutPanel({ seat, onBack }) {
   async function handleConfirmPayment(event) {
     event.preventDefault();
     await runAction(setState, async () => {
-      const result = await payBooking({
-        bookingId: bookingResult?.booking?.booking_id,
-        paymentMethod
-      });
-      setPaymentResult(result);
-      return `Payment confirmed for booking ${result?.booking_id ?? bookingResult?.booking?.booking_id ?? ""}`;
+      const bookingsToPay = bookingResult?.bookings ?? [bookingResult?.booking].filter(Boolean);
+      const results = [];
+      for (const booking of bookingsToPay) {
+        results.push(await payBooking({
+          bookingId: booking.booking_id,
+          paymentMethod
+        }));
+      }
+      setPaymentResult(results[0] ? { ...results[0], tickets: results } : null);
+      return `Payment confirmed for ${results.length} booking${results.length === 1 ? "" : "s"}`;
     });
   }
 
@@ -1702,6 +1691,9 @@ function ItineraryDetails({ legs, layovers }) {
             <div className="segmentCarrier">
               <Plane size={18} />
               <span>{leg.airlineName} {leg.flightNo}</span>
+              {String(leg.bookingStatus ?? "").toUpperCase() === "CANCELLED" && (
+                <span className="segmentStatus cancelled">Cancelled</span>
+              )}
             </div>
             <div className="segmentTimeline">
               <span>{formatFlightTime(leg.departureTime)}</span>
@@ -1820,11 +1812,23 @@ function AccountPanel() {
   const [account, setAccount] = useState(null);
   const [bookings, setBookings] = useState([]);
   const [bookingView, setBookingView] = useState("current");
+  const [activeBooking, setActiveBooking] = useState(null);
+  const [activePendingTripId, setActivePendingTripId] = useState(null);
   const [cancellationPreview, setCancellationPreview] = useState(null);
+  const [paymentPreview, setPaymentPreview] = useState(null);
   const [state, setState] = useState({ loading: false, error: "", success: "" });
-  const currentBookings = bookings.filter(isCurrentBooking);
-  const pastBookings = bookings.filter((booking) => !isCurrentBooking(booking));
-  const visibleBookings = bookingView === "current" ? currentBookings : pastBookings;
+  const pendingBookings = bookings.filter(isPendingPaymentBooking);
+  const pendingTrips = buildBookingTrips(pendingBookings);
+  const completedTrips = buildBookingTrips(bookings.filter((booking) => !isPendingPaymentBooking(booking)));
+  const currentTrips = completedTrips.filter((trip) => trip.bookings.some(isCurrentBooking));
+  const pastTrips = completedTrips.filter((trip) => !trip.bookings.some(isCurrentBooking));
+  const visibleTrips = bookingView === "current" ? currentTrips : pastTrips;
+  const bookingViewTitle = {
+    pending: "Pending Payments",
+    current: "Current Bookings",
+    past: "Past Bookings"
+  }[bookingView];
+  const totalRefund = bookings.reduce((total, booking) => total + getBookingRefundAmount(booking), 0);
 
   async function loadBookings(accountId) {
     const data = await listBookings(accountId);
@@ -1875,27 +1879,78 @@ function AccountPanel() {
     });
   }
 
-  async function handlePreviewCancel(booking) {
+  async function handlePreviewCancelTrip(trip) {
     await runAction(setState, async () => {
-      let feeInfo = null;
-      if (booking.booking_status === "CONFIRMED") {
-        feeInfo = await calculateCancellationFee(booking.booking_id);
+      const bookingsToCancel = trip.bookings.filter(isCancelableBooking);
+      const feeInfos = [];
+      for (const booking of bookingsToCancel) {
+        feeInfos.push(await calculateCancellationFee(booking.booking_id));
       }
-      setCancellationPreview({ booking, feeInfo });
+      const feeInfo = feeInfos.reduce(
+        (total, current) => ({
+          paid_amount: total.paid_amount + Number(current?.paid_amount ?? 0),
+          cancellation_fee: total.cancellation_fee + Number(current?.cancellation_fee ?? 0),
+          refund_amount: total.refund_amount + Number(current?.refund_amount ?? 0),
+          policy_name: feeInfos.length > 1 ? "Trip total" : current?.policy_name
+        }),
+        { paid_amount: 0, cancellation_fee: 0, refund_amount: 0, policy_name: "Trip total" }
+      );
+      setPaymentPreview(null);
+      setActiveBooking(trip);
+      setCancellationPreview({ booking: bookingsToCancel[0], bookings: bookingsToCancel, feeInfo, feeInfos });
       return "Cancellation preview loaded";
+    });
+  }
+
+  function handleSelectBookingTrip(trip) {
+    const isSameBooking = activeBooking?.tripId === trip.tripId;
+    setActiveBooking(isSameBooking ? null : trip);
+    setActivePendingTripId(null);
+    setCancellationPreview(null);
+    setPaymentPreview(null);
+  }
+
+  function handleSelectPendingTrip(trip) {
+    const isSameTrip = activePendingTripId === trip.tripId;
+    setActivePendingTripId(isSameTrip ? null : trip.tripId);
+    setActiveBooking(null);
+    setCancellationPreview(null);
+    setPaymentPreview(isSameTrip ? null : { bookingGroup: trip, method: "CREDIT_CARD" });
+  }
+
+  async function handleConfirmAccountPayment(event) {
+    event.preventDefault();
+    if (!account || !paymentPreview) return;
+    await runAction(setState, async () => {
+      const bookingsToPay = paymentPreview.bookingGroup?.bookings ?? [paymentPreview.booking];
+      const results = [];
+      for (const booking of bookingsToPay) {
+        results.push(await payBooking({
+          bookingId: booking.booking_id,
+          paymentMethod: paymentPreview.method
+        }));
+      }
+      setPaymentPreview(null);
+      setActivePendingTripId(null);
+      const data = await loadBookings(account.account_id);
+      return `${results.length} ticket${results.length === 1 ? "" : "s"} issued. ${data.length} booking${data.length === 1 ? "" : "s"} refreshed`;
     });
   }
 
   async function handleConfirmCancel() {
     if (!account || !cancellationPreview) return;
     await runAction(setState, async () => {
-      await cancelBooking({
-        accountId: account.account_id,
-        bookingId: cancellationPreview.booking.booking_id
-      });
+      const bookingsToCancel = cancellationPreview.bookings ?? [cancellationPreview.booking];
+      for (const booking of bookingsToCancel) {
+        await cancelBooking({
+          accountId: account.account_id,
+          bookingId: booking.booking_id
+        });
+      }
       setCancellationPreview(null);
+      setActiveBooking(null);
       const data = await loadBookings(account.account_id);
-      return `${data.length} booking${data.length === 1 ? "" : "s"} refreshed`;
+      return `${bookingsToCancel.length} flight${bookingsToCancel.length === 1 ? "" : "s"} cancelled. ${data.length} booking${data.length === 1 ? "" : "s"} refreshed`;
     });
   }
 
@@ -1999,13 +2054,17 @@ function AccountPanel() {
             <dt>Email</dt>
             <dd>{account.email_address}</dd>
           </div>
+          <div>
+            <dt>Refunds</dt>
+            <dd>{formatMoney(totalRefund)}</dd>
+          </div>
         </dl>
       </section>
 
-      <section className="panel wide">
+      <section className="panel wide accountBookingsPanel">
         <PanelHeader
           icon={Ticket}
-          title={bookingView === "current" ? "Current Bookings" : "Past Bookings"}
+          title={bookingViewTitle}
           action={
             <div className="buttonGroup">
               <SegmentedControl
@@ -2013,8 +2072,12 @@ function AccountPanel() {
                 onChange={(value) => {
                   setBookingView(value);
                   setCancellationPreview(null);
+                  setPaymentPreview(null);
+                  setActiveBooking(null);
+                  setActivePendingTripId(null);
                 }}
                 options={[
+                  ["pending", "Pending"],
                   ["current", "Current"],
                   ["past", "Past"]
                 ]}
@@ -2031,14 +2094,29 @@ function AccountPanel() {
             </div>
           }
         />
-        <BookingTable
-          bookings={visibleBookings}
-          onCancelPick={bookingView === "current" ? handlePreviewCancel : undefined}
-          activePreview={cancellationPreview}
-          onConfirmCancel={handleConfirmCancel}
-          onDismissCancel={() => setCancellationPreview(null)}
-          cancelLoading={state.loading}
-        />
+        {bookingView === "pending" ? (
+          <PendingBookingsPanel
+            trips={pendingTrips}
+            activeTripId={activePendingTripId}
+            activePayment={paymentPreview}
+            onSelectTrip={handleSelectPendingTrip}
+            onConfirmPayment={handleConfirmAccountPayment}
+            onPaymentMethodChange={(method) => setPaymentPreview((current) => current ? { ...current, method } : current)}
+            onDismissPayment={() => setPaymentPreview(null)}
+            loading={state.loading}
+          />
+        ) : (
+          <BookingTable
+            trips={visibleTrips}
+            activeBooking={activeBooking}
+            activePreview={cancellationPreview}
+            onSelectTrip={handleSelectBookingTrip}
+            onCancelPick={bookingView === "current" ? handlePreviewCancelTrip : undefined}
+            onConfirmCancel={handleConfirmCancel}
+            onDismissCancel={() => setCancellationPreview(null)}
+            cancelLoading={state.loading}
+          />
+        )}
       </section>
     </div>
   );
@@ -2047,7 +2125,305 @@ function AccountPanel() {
 function isCurrentBooking(booking) {
   const departure = booking.flight_seat?.flight?.departure_ts;
   const isUpcoming = departure ? new Date(departure).getTime() >= Date.now() : true;
-  return isUpcoming && ["PENDING_PAYMENT", "CONFIRMED"].includes(booking.booking_status);
+  return isUpcoming && ["PENDING", "PENDING_PAYMENT", "HELD", "CONFIRMED"].includes(
+    String(booking.booking_status ?? "").toUpperCase()
+  );
+}
+
+function isPendingPaymentBooking(booking) {
+  return ["PENDING", "PENDING_PAYMENT", "HELD"].includes(String(booking.booking_status ?? "").toUpperCase());
+}
+
+function getBookingAmount(booking) {
+  const payment = Array.isArray(booking.payment) ? booking.payment[0] : booking.payment;
+  return Number(payment?.amount ?? booking.flight_seat?.seat_price ?? 0);
+}
+
+function getBookingRefundAmount(booking) {
+  const refunds = Array.isArray(booking.refund) ? booking.refund : booking.refund ? [booking.refund] : [];
+  return refunds.reduce((total, refund) => total + Number(refund?.amount ?? 0), 0);
+}
+
+function getBookingRouteLabel(booking) {
+  const route = booking.flight_seat?.flight?.flight_schedule?.route;
+  return `${route?.departure?.iata_code ?? "—"} → ${route?.arrival?.iata_code ?? "—"}`;
+}
+
+function getBookingDepartureCode(booking) {
+  return booking.flight_seat?.flight?.flight_schedule?.route?.departure?.iata_code ?? "";
+}
+
+function getBookingArrivalCode(booking) {
+  return booking.flight_seat?.flight?.flight_schedule?.route?.arrival?.iata_code ?? "";
+}
+
+function getBookingDepartureTime(booking) {
+  return new Date(booking.flight_seat?.flight?.departure_ts ?? 0).getTime();
+}
+
+function getBookingArrivalTime(booking) {
+  return new Date(booking.flight_seat?.flight?.arrival_ts ?? 0).getTime();
+}
+
+function areBookingsSameCheckoutGroup(firstBooking, nextBooking) {
+  const firstTs = new Date(firstBooking.booking_ts ?? 0).getTime();
+  const nextTs = new Date(nextBooking.booking_ts ?? 0).getTime();
+  if (!firstTs || !nextTs) return false;
+  return Math.abs(nextTs - firstTs) <= 15 * 60 * 1000;
+}
+
+function buildBookingTrips(bookings) {
+  const remaining = [...bookings].sort((a, b) => getBookingDepartureTime(a) - getBookingDepartureTime(b));
+  const trips = [];
+
+  while (remaining.length) {
+    const first = remaining.shift();
+    const group = [first];
+    let last = first;
+
+    for (;;) {
+      const nextIndex = remaining.findIndex((candidate) => {
+        const layoverMinutes = (getBookingDepartureTime(candidate) - getBookingArrivalTime(last)) / 60000;
+        return (
+          areBookingsSameCheckoutGroup(first, candidate) &&
+          getBookingArrivalCode(last) &&
+          getBookingArrivalCode(last) === getBookingDepartureCode(candidate) &&
+          layoverMinutes >= 0 &&
+          layoverMinutes <= 24 * 60
+        );
+      });
+      if (nextIndex < 0) break;
+      const [next] = remaining.splice(nextIndex, 1);
+      group.push(next);
+      last = next;
+    }
+
+    trips.push(buildBookingTrip(group));
+  }
+
+  return trips;
+}
+
+function buildBookingTrip(bookings) {
+  const orderedBookings = [...bookings].sort((a, b) => getBookingDepartureTime(a) - getBookingDepartureTime(b));
+  const first = orderedBookings[0];
+  const last = orderedBookings[orderedBookings.length - 1];
+  return {
+    tripId: orderedBookings.map((booking) => booking.booking_id).join("-"),
+    bookings: orderedBookings,
+    originCode: getBookingDepartureCode(first),
+    destinationCode: getBookingArrivalCode(last),
+    departureTs: first?.flight_seat?.flight?.departure_ts,
+    arrivalTs: last?.flight_seat?.flight?.arrival_ts,
+    amount: orderedBookings.reduce((total, booking) => total + getBookingAmount(booking), 0),
+    refund: orderedBookings.reduce((total, booking) => total + getBookingRefundAmount(booking), 0)
+  };
+}
+
+function getTripStatus(trip) {
+  const statuses = trip.bookings.map((booking) => String(booking.booking_status ?? "").toUpperCase());
+  if (statuses.every((status) => status === statuses[0])) return statuses[0] ?? "—";
+  if (statuses.includes("CANCELLED")) return "PARTIAL_CANCELLED";
+  if (statuses.includes("PENDING_PAYMENT") || statuses.includes("PENDING") || statuses.includes("HELD")) {
+    return "PENDING_PAYMENT";
+  }
+  return statuses[0] ?? "—";
+}
+
+function buildAccountRouteInfo(bookings) {
+  const orderedBookings = [...bookings].sort((a, b) => getBookingDepartureTime(a) - getBookingDepartureTime(b));
+  const legs = orderedBookings.map((booking, index) => {
+    const seat = booking.flight_seat;
+    const flight = seat?.flight;
+    const schedule = flight?.flight_schedule;
+    const route = schedule?.route;
+    return {
+      legNo: index + 1,
+      flightId: flight?.flight_id,
+      airlineName: "Flight",
+      flightNo: schedule?.flight_no ?? "—",
+      originCode: route?.departure?.iata_code ?? "",
+      destinationCode: route?.arrival?.iata_code ?? "",
+      originName: route?.departure?.city ?? route?.departure?.iata_code ?? "",
+      destinationName: route?.arrival?.city ?? route?.arrival?.iata_code ?? "",
+      departureTime: flight?.departure_ts,
+      arrivalTime: flight?.arrival_ts,
+      seatClass: seat?.aircraft_model_seat?.seat_class?.class_name,
+      price: Number(seat?.seat_price ?? 0),
+      bookingStatus: booking.booking_status
+    };
+  });
+  const firstLeg = legs[0] ?? {};
+  const lastLeg = legs[legs.length - 1] ?? {};
+  const stopAirports = legs.slice(0, -1).map((leg) => leg.destinationCode).filter(Boolean);
+  return {
+    carrier: uniqueValues(legs.map((leg) => leg.flightNo)).join(" + ") || "Flight",
+    originCode: firstLeg.originCode ?? "",
+    destinationCode: lastLeg.destinationCode ?? "",
+    originName: firstLeg.originName ?? "",
+    destinationName: lastLeg.destinationName ?? "",
+    departureTime: firstLeg.departureTime,
+    arrivalTime: lastLeg.arrivalTime,
+    duration: formatDurationMinutes(minutesBetween(firstLeg.departureTime, lastLeg.arrivalTime)),
+    stops: Math.max(0, legs.length - 1),
+    stopAirports,
+    legs,
+    layovers: getLayoverDetails(legs),
+    routePrice: orderedBookings.reduce((total, booking) => total + getBookingAmount(booking), 0)
+  };
+}
+
+function isCancelableBooking(booking) {
+  return ["CONFIRMED"].includes(String(booking.booking_status ?? "").toUpperCase());
+}
+
+function isCancelledBooking(booking) {
+  return ["CANCELLED"].includes(String(booking.booking_status ?? "").toUpperCase());
+}
+
+function PendingBookingsPanel({
+  trips,
+  activeTripId,
+  activePayment,
+  onSelectTrip,
+  onConfirmPayment,
+  onPaymentMethodChange,
+  onDismissPayment,
+  loading
+}) {
+  return (
+    <div className="pendingBookingsPanel">
+      <div className="sectionHeaderSmall">
+        <strong>Pending Payments</strong>
+        <span>{trips.length}</span>
+      </div>
+      {!trips.length ? (
+        <p className="mutedText">No pending payments.</p>
+      ) : (
+        <div className="pendingBookingList">
+          {trips.map((trip) => {
+            const isActive = activeTripId === trip.tripId;
+            return (
+              <div className={isActive ? "pendingBookingItem active" : "pendingBookingItem"} key={trip.tripId}>
+                <button onClick={() => onSelectTrip(trip)} type="button">
+                  <span>{trip.originCode || "—"} → {trip.destinationCode || "—"}</span>
+                  <strong>{formatMoney(trip.amount)}</strong>
+                  <small>
+                    {trip.bookings.length} flight{trip.bookings.length === 1 ? "" : "s"} · {formatDateTime(trip.departureTs)}
+                  </small>
+                </button>
+                {isActive && activePayment?.bookingGroup?.tripId === trip.tripId && (
+                  <AccountBookingDetails
+                    bookingGroup={trip}
+                    paymentPreview={activePayment}
+                    onConfirmPayment={onConfirmPayment}
+                    onPaymentMethodChange={onPaymentMethodChange}
+                    onDismissPayment={onDismissPayment}
+                    loading={loading}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AccountBookingDetails({
+  booking,
+  bookingGroup,
+  cancellationPreview,
+  paymentPreview,
+  onPreviewCancel,
+  onConfirmCancel,
+  onDismissCancel,
+  onConfirmPayment,
+  onPaymentMethodChange,
+  onDismissPayment,
+  loading
+}) {
+  const detailBookings = bookingGroup?.bookings ?? [booking];
+  const primaryBooking = detailBookings[0];
+  const seat = primaryBooking.flight_seat;
+  const cancelableBookings = onPreviewCancel ? detailBookings.filter(isCancelableBooking) : [];
+  const previewBookingIds = (cancellationPreview?.bookings ?? [cancellationPreview?.booking])
+    .filter(Boolean)
+    .map((item) => item.booking_id);
+  const isCancellationPreviewOpen = detailBookings.some((item) => previewBookingIds.includes(item.booking_id));
+  const ticketLabels = detailBookings
+    .map((item) => {
+      const ticket = Array.isArray(item.ticket) ? item.ticket[0] : item.ticket;
+      return ticket?.ticket_no;
+    })
+    .filter(Boolean);
+  const refundAmount = bookingGroup?.refund ?? getBookingRefundAmount(primaryBooking);
+  const amount = bookingGroup?.amount ?? getBookingAmount(primaryBooking);
+  const routeInfo = buildAccountRouteInfo(detailBookings);
+
+  return (
+    <div className="accountBookingDetails">
+      <BookingRouteMini info={routeInfo} />
+      <ItineraryDetails legs={routeInfo.legs} layovers={routeInfo.layovers} />
+      <div className="classGrid">
+        <div className="metric">
+          <span>Seats</span>
+          <strong>{detailBookings.map((item) => item.flight_seat?.aircraft_model_seat?.seat_no ?? "—").join(", ")}</strong>
+        </div>
+        <div className="metric">
+          <span>Cabin</span>
+          <strong>{seat?.aircraft_model_seat?.seat_class?.class_name ?? "—"}</strong>
+        </div>
+        <div className="metric">
+          <span>Amount</span>
+          <strong>{formatMoney(amount)}</strong>
+        </div>
+        <div className="metric">
+          <span>Tickets</span>
+          <strong>{ticketLabels.length ? ticketLabels.join(", ") : "—"}</strong>
+        </div>
+        <div className="metric">
+          <span>Refund</span>
+          <strong>{formatMoney(refundAmount)}</strong>
+        </div>
+      </div>
+
+      {(paymentPreview?.booking?.booking_id === primaryBooking.booking_id ||
+        paymentPreview?.bookingGroup?.tripId === bookingGroup?.tripId) && (
+        <AccountPaymentPreview
+          preview={paymentPreview}
+          onConfirm={onConfirmPayment}
+          onDismiss={onDismissPayment}
+          onMethodChange={onPaymentMethodChange}
+          loading={loading}
+        />
+      )}
+
+      {isCancellationPreviewOpen ? (
+        <CancellationPreview
+          preview={cancellationPreview}
+          onConfirm={onConfirmCancel}
+          onDismiss={onDismissCancel}
+          loading={loading}
+        />
+      ) : (
+        Boolean(cancelableBookings.length) && (
+          <div className="buttonGroup">
+            <button
+              className="dangerButton"
+              onClick={() => onPreviewCancel(bookingGroup ?? buildBookingTrip([primaryBooking]))}
+              disabled={loading}
+              type="button"
+            >
+              <RotateCcw size={17} />
+              <span>{detailBookings.length > 1 ? "Cancel Trip" : "Cancel Booking"}</span>
+            </button>
+          </div>
+        )
+      )}
+    </div>
+  );
 }
 
 function CancellationPreview({ preview, onConfirm, onDismiss, loading }) {
@@ -2088,6 +2464,72 @@ function CancellationPreview({ preview, onConfirm, onDismiss, loading }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function AccountPaymentPreview({ preview, onConfirm, onDismiss, onMethodChange, loading }) {
+  const { booking, bookingGroup, method } = preview;
+  const bookings = bookingGroup?.bookings ?? [booking];
+  const firstBooking = bookings[0];
+  const lastBooking = bookings[bookings.length - 1];
+  const seat = firstBooking.flight_seat;
+  const firstRoute = seat?.flight?.flight_schedule?.route;
+  const amount = bookingGroup?.amount ?? getBookingAmount(firstBooking);
+  const routeLabel = bookingGroup
+    ? `${bookingGroup.originCode || "—"} → ${bookingGroup.destinationCode || "—"}`
+    : `${firstRoute?.departure?.iata_code ?? "—"} → ${firstRoute?.arrival?.iata_code ?? "—"}`;
+  const seatLabel = bookings.map((item) => item.flight_seat?.aircraft_model_seat?.seat_no ?? "—").join(", ");
+  const methods = [
+    ["CREDIT_CARD", "Credit Card"],
+    ["MOBILE_PAY", "Mobile Pay"],
+    ["BANK_TRANSFER", "Bank Transfer"],
+    ["PAYPAL", "PayPal"]
+  ];
+
+  return (
+    <form className="accountPaymentPreview" onSubmit={onConfirm}>
+      <div className="classGrid">
+        <div className="metric">
+          <span>Route</span>
+          <strong>{routeLabel}</strong>
+        </div>
+        <div className="metric">
+          <span>Flights</span>
+          <strong>{bookings.length}</strong>
+        </div>
+        <div className="metric">
+          <span>Seats</span>
+          <strong>{seatLabel}</strong>
+        </div>
+        <div className="metric">
+          <span>Amount</span>
+          <strong>{formatMoney(amount)}</strong>
+        </div>
+      </div>
+      <div className="paymentMethods">
+        {methods.map(([value, label]) => (
+          <label className={method === value ? "paymentMethod active" : "paymentMethod"} key={value}>
+            <input
+              type="radio"
+              name={`account-payment-${bookingGroup?.tripId ?? firstBooking.booking_id}`}
+              value={value}
+              checked={method === value}
+              onChange={() => onMethodChange(value)}
+            />
+            <span>{label}</span>
+          </label>
+        ))}
+      </div>
+      <div className="buttonGroup">
+        <button className="secondaryButton" onClick={onDismiss} type="button">
+          Later
+        </button>
+        <button className="primaryButton" disabled={loading} type="submit">
+          <CreditCard size={17} />
+          <span>Confirm and Pay {formatMoney(amount)}</span>
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -2220,7 +2662,7 @@ function BookingPanel({ accountId }) {
         />
         <ActionState state={state} />
         <BookingTable
-          bookings={bookings}
+          trips={buildBookingTrips(bookings)}
           onCancelPick={(booking) => setCancelForm({ accountId, bookingId: String(booking.booking_id) })}
         />
       </section>
@@ -2229,71 +2671,61 @@ function BookingPanel({ accountId }) {
 }
 
 function BookingTable({
-  bookings,
-  onCancelPick,
+  trips,
+  activeBooking,
   activePreview,
+  onSelectTrip,
+  onCancelPick,
   onConfirmCancel,
   onDismissCancel,
   cancelLoading
 }) {
-  if (!bookings.length) return <EmptyState icon={Ticket} title="No bookings loaded" />;
-  const showActions = Boolean(onCancelPick);
-  const columnCount = showActions ? 7 : 6;
+  if (!trips.length) return <EmptyState icon={Ticket} title="No bookings loaded" />;
+  const columnCount = 5;
 
   return (
     <div className="tableWrap">
       <table>
         <thead>
           <tr>
-            <th>ID</th>
-            <th>Status</th>
             <th>Route</th>
+            <th>Date</th>
             <th>Seat</th>
             <th>Amount</th>
-            <th>Ticket</th>
-            {showActions && <th></th>}
+            <th>Status</th>
           </tr>
         </thead>
         <tbody>
-          {bookings.map((booking) => {
+          {trips.map((trip) => {
+            const booking = trip.bookings[0];
             const seat = booking.flight_seat;
             const flight = seat?.flight;
-            const route = flight?.flight_schedule?.route;
-            const payment = Array.isArray(booking.payment) ? booking.payment[0] : booking.payment;
-            const ticket = Array.isArray(booking.ticket) ? booking.ticket[0] : booking.ticket;
-            const isPreviewOpen = activePreview?.booking?.booking_id === booking.booking_id;
+            const isActive = activeBooking?.tripId === trip.tripId;
+            const isPreviewOpen = trip.bookings.some((item) => activePreview?.booking?.booking_id === item.booking_id);
             return (
-              <React.Fragment key={booking.booking_id}>
-                <tr className={isPreviewOpen ? "bookingRow active" : "bookingRow"}>
-                  <td>{booking.booking_id}</td>
-                  <td><StatusBadge value={booking.booking_status} /></td>
+              <React.Fragment key={trip.tripId}>
+                <tr
+                  className={isActive || isPreviewOpen ? "bookingRow active clickable" : "bookingRow clickable"}
+                  onClick={() => onSelectTrip?.(trip)}
+                >
                   <td>
-                    {route?.departure?.iata_code ?? "—"} → {route?.arrival?.iata_code ?? "—"}
-                    <small>{formatDateTime(flight?.departure_ts)}</small>
+                    {trip.originCode || "—"} → {trip.destinationCode || "—"}
+                    <small>{trip.bookings.length} flight{trip.bookings.length === 1 ? "" : "s"}</small>
                   </td>
-                  <td>{seat?.aircraft_model_seat?.seat_no ?? "—"}</td>
-                  <td>{formatMoney(payment?.amount ?? seat?.seat_price)}</td>
-                  <td>{ticket?.ticket_no ?? "—"}</td>
-                  {showActions && (
-                    <td>
-                      <button
-                        className="dangerButton compactButton"
-                        onClick={() => onCancelPick(booking)}
-                        type="button"
-                        title="Preview cancellation fee"
-                      >
-                        Cancel
-                      </button>
-                    </td>
-                  )}
+                  <td>{formatDateTime(trip.departureTs)}</td>
+                  <td>{trip.bookings.map((item) => item.flight_seat?.aircraft_model_seat?.seat_no ?? "—").join(", ")}</td>
+                  <td>{formatMoney(trip.amount)}</td>
+                  <td><StatusBadge value={getTripStatus(trip)} /></td>
                 </tr>
-                {isPreviewOpen && (
+                {(isActive || isPreviewOpen) && (
                   <tr className="previewRow">
                     <td colSpan={columnCount}>
-                      <CancellationPreview
-                        preview={activePreview}
-                        onConfirm={onConfirmCancel}
-                        onDismiss={onDismissCancel}
+                      <AccountBookingDetails
+                        bookingGroup={trip}
+                        cancellationPreview={activePreview}
+                        onPreviewCancel={onCancelPick}
+                        onConfirmCancel={onConfirmCancel}
+                        onDismissCancel={onDismissCancel}
                         loading={cancelLoading}
                       />
                     </td>

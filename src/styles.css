@@ -207,7 +207,7 @@ button {
 
 .contentGrid {
   display: grid;
-  grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
@@ -231,12 +231,12 @@ button {
 }
 
 .checkoutFlow.seatStepFlow {
-  grid-template-columns: 150px minmax(0, 1fr);
+  grid-template-columns: 170px minmax(0, 1fr);
   align-items: stretch;
 }
 
 .seatStepFlow .checkoutProgress {
-  min-height: 100%;
+  min-height: 0;
 }
 
 .seatStepFlow .panel {
@@ -250,15 +250,13 @@ button {
   grid-template-columns: 1fr;
   grid-template-rows: min-content minmax(72px, 1fr) min-content minmax(72px, 1fr) min-content;
   align-items: stretch;
+  align-self: start;
   gap: 0;
+  height: 420px;
   padding: 14px;
   background: #f6f8fb;
   border: 1px solid #dde5ec;
   border-radius: 8px;
-}
-
-.seatStepFlow .checkoutProgress {
-  grid-template-rows: min-content minmax(150px, 1fr) min-content minmax(150px, 1fr) min-content;
 }
 
 .progressItem {
@@ -637,6 +635,77 @@ button {
   display: block;
   margin-top: 3px;
   font-size: 14px;
+}
+
+.pendingBookingsPanel {
+  display: grid;
+  gap: 10px;
+}
+
+.sectionHeaderSmall {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #263746;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.sectionHeaderSmall span {
+  display: grid;
+  min-width: 24px;
+  height: 24px;
+  place-items: center;
+  color: #ffffff;
+  background: #138a9e;
+  border-radius: 999px;
+}
+
+.mutedText {
+  margin: 0;
+  color: #748392;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pendingBookingList {
+  display: grid;
+  gap: 10px;
+}
+
+.pendingBookingItem {
+  display: grid;
+  gap: 10px;
+}
+
+.pendingBookingItem > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  width: 100%;
+  padding: 12px;
+  color: #263746;
+  background: #f8fbfc;
+  border: 1px solid #dce6eb;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.pendingBookingItem.active > button {
+  background: #edf9fb;
+  border-color: #76c6d0;
+}
+
+.pendingBookingItem span,
+.pendingBookingItem strong {
+  font-weight: 900;
+}
+
+.pendingBookingItem small {
+  grid-column: 1 / -1;
+  color: #71808c;
+  font-weight: 700;
 }
 
 .sideRail {
@@ -1206,6 +1275,21 @@ button {
   color: #e0005a;
 }
 
+.segmentStatus {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.segmentStatus.cancelled {
+  color: #8b251b;
+  background: #ffe2de;
+}
+
 .segmentTimeline {
   display: grid;
   grid-template-columns: 54px 18px minmax(0, 1fr);
@@ -1597,11 +1681,11 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 28px;
-  padding: 0 10px;
+  min-height: 24px;
+  padding: 0 8px;
   white-space: nowrap;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -1864,6 +1948,12 @@ button {
   border-radius: 8px;
 }
 
+.accountBookingsPanel th,
+.accountBookingsPanel td {
+  padding: 12px 6px;
+  overflow-wrap: anywhere;
+}
+
 table {
   width: 100%;
   min-width: 780px;
@@ -1896,6 +1986,14 @@ tr:last-child td {
   border-bottom: 0;
 }
 
+.bookingRow.clickable {
+  cursor: pointer;
+}
+
+.bookingRow.clickable:hover td {
+  background: #f7fbfc;
+}
+
 .bookingRow.active td {
   background: #fff8f7;
 }
@@ -1914,6 +2012,68 @@ tr:last-child td {
   box-shadow: none;
 }
 
+.previewRow .accountPaymentPreview {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid #bee3e9;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.accountPaymentPreview {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  background: #ffffff;
+  border: 1px solid #dce6eb;
+  border-radius: 8px;
+}
+
+.accountBookingDetails {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  background: #ffffff;
+}
+
+.accountBookingDetails .bookingRouteMini {
+  width: calc(100% - 40px);
+  max-width: calc(100% - 40px);
+  justify-self: start;
+}
+
+.accountBookingDetails .segmentLine {
+  height: 48px;
+  box-shadow:
+    0 -20px 0 -1px #ffffff,
+    0 -20px 0 2px #c8d0da,
+    0 20px 0 -1px #ffffff,
+    0 20px 0 2px #c8d0da;
+}
+
+.accountBookingRoute {
+  display: grid;
+  gap: 4px;
+  color: #1d3045;
+}
+
+.accountBookingRoute strong {
+  font-size: 17px;
+}
+
+.accountBookingRoute span {
+  color: #667684;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.accountBookingDetails .cancelPreview,
+.accountBookingDetails .accountPaymentPreview {
+  padding: 14px;
+  border: 1px solid #dce6eb;
+  border-radius: 8px;
+}
+
 .status {
   color: #344b5c;
   background: #eef3f5;
@@ -1928,6 +2088,7 @@ tr:last-child td {
 }
 
 .status.cancelled,
+.status.partial_cancelled,
 .status.voided,
 .status.failed {
   color: #8b251b;
@@ -2002,6 +2163,7 @@ tr:last-child td {
 
   .checkoutProgress {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    height: auto;
   }
 
   .progressItem {
